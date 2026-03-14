@@ -1,0 +1,35 @@
+site: xiaohongshu
+name: comments
+description: "小红书笔记评论"
+domain: www.xiaohongshu.com
+strategy: intercept
+browser: true
+
+args:
+  id:
+    type: str
+    required: true
+    description: Note ID
+  limit:
+    type: int
+    default: 20
+    description: Number of comments
+
+columns: [rank, author, content, likes, time]
+
+pipeline:
+  - navigate: https://www.xiaohongshu.com/explore/${{ args.id }}
+  - wait: 3
+  - tap:
+      store: comment
+      action: fetchComments
+      capture: comment/list
+      select: data.comments
+      timeout: 8
+  - map:
+      rank: ${{ index + 1 }}
+      author: ${{ item.user_info.nickname }}
+      content: ${{ item.content }}
+      likes: ${{ item.like_count }}
+      time: ${{ item.create_time }}
+  - limit: ${{ args.limit | default(20) }}

@@ -1,0 +1,35 @@
+site: xiaohongshu
+name: user-posts
+description: "小红书用户的所有笔记"
+domain: www.xiaohongshu.com
+strategy: intercept
+browser: true
+
+args:
+  uid:
+    type: str
+    required: true
+    description: User UID
+  limit:
+    type: int
+    default: 20
+    description: Number of posts
+
+columns: [rank, title, likes, type, url]
+
+pipeline:
+  - navigate: https://www.xiaohongshu.com/user/profile/${{ args.uid }}
+  - wait: 3
+  - tap:
+      store: user
+      action: fetchUserNotes
+      capture: user/posted
+      select: data.notes
+      timeout: 8
+  - map:
+      rank: ${{ index + 1 }}
+      title: ${{ item.display_title }}
+      likes: ${{ item.interact_info.liked_count }}
+      type: ${{ item.type }}
+      url: https://www.xiaohongshu.com/explore/${{ item.note_id }}
+  - limit: ${{ args.limit | default(20) }}
