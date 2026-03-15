@@ -569,6 +569,70 @@ git push
 
 ---
 
+## 进阶模式: 级联请求 (Cascading Requests)
+
+当目标数据需要多步 API 链式获取时（如 `BVID → CID → 字幕列表 → 字幕内容`），必须使用 **TS 适配器**。YAML 无法处理这种多步逻辑。
+
+### 模板代码
+
+```typescript
+import { cli, Strategy } from '../../registry.js';
+import type { IPage } from '../../types.js';
+import { apiGet } from '../../bilibili.js'; // 复用平台 SDK
+
+cli({
+  site: 'bilibili',
+  name: 'subtitle',
+  strategy: Strategy.COOKIE,
+  args: [{ name: 'bvid', required: true }],
+  columns: ['index', 'from', 'to', 'content'],
+  func: async (page: IPage | null, kwargs: any) => {
+    if (!page) throw new Error('Requires browser');
+
+    // Step 1: 建立 Session
+    await page.goto(`https://www.bilibili.com/video/${kwargs.bvid}/`);
+
+    // Step 2: 从页面提取中间 ID (__INITIAL_STATE__)
+    const cid = await page.evaluate(`(async () => {
+      return window.__INITIAL_STATE__?.videoData?.cid;
+    })()`);
+    if (!cid) throw new Error('无法提取 CID');
+
+    // Step 3: 用中间 ID 调用下一级 API (自动 Wbi 签名)
+    const payload = await apiGet(page, '/x/player/wbi/v2', {
+      params: { bvid: kwargs.bvid, cid },
+      signed: true, // ← 自动生成 w_rid
+    });
+
+    // Step 4: 检测风控降级 (空值断言)
+    const subtitles = payload.data?.subtitle?.subtitles || [];
+    const url = subtitles[0]?.subtitle_url;
+    if (!url) throw new Error('subtitle_url 为空，疑似风控降级');
+
+    // Step 5: 拉取最终数据 (CDN JSON)
+    const items = await page.evaluate(`(async () => {
+      const res = await fetch(${JSON.stringify('https:' + url)});
+      const json = await res.json();
+      return { data: json.body || json };
+    })()`);
+
+    return items.data.map((item, idx) => ({ ... }));
+  },
+});
+```
+
+### 关键要点
+
+| 步骤 | 注意事项 |
+|------|----------|
+| 提取中间 ID | 优先从 `__INITIAL_STATE__` 拿，避免额外 API 调用 |
+| Wbi 签名 | B 站 `/wbi/` 接口**强制校验** `w_rid`，纯 `fetch` 会被 403 |
+| 空值断言 | 即使 HTTP 200，核心字段可能为空串（风控降级） |
+| CDN URL | 常以 `//` 开头，记得补 `https:` |
+| `JSON.stringify` | 拼接 URL 到 evaluate 时必须用它转义，避免注入 |
+
+---
+
 ## 常见陷阱
 
 | 陷阱 | 表现 | 解决方案 |
@@ -597,9 +661,10 @@ git push
 opencli generate https://www.example.com --goal "hot"
 
 # 或分步执行：
-opencli explore https://www.example.com --site mysite   # 发现 API
-opencli synthesize mysite                                # 生成候选 YAML
-opencli verify mysite/hot --smoke                        # 冒烟测试
+opencli explore https://www.example.com --site mysite           # 发现 API
+opencli explore https://www.example.com --auto --click "字幕,CC"  # 模拟点击触发懒加载 API
+opencli synthesize mysite                                        # 生成候选 YAML
+opencli verify mysite/hot --smoke                                # 冒烟测试
 ```
 
 生成的候选 YAML 保存在 `.opencli/explore/mysite/candidates/`，可直接复制到 `src/clis/mysite/` 并微调。
