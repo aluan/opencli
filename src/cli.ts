@@ -130,6 +130,8 @@ export function runCli(BUILTIN_CLIS: string, USER_CLIS: string): void {
   for (const [, cmd] of registry) {
     let siteCmd = siteGroups.get(cmd.site);
     if (!siteCmd) { siteCmd = program.command(cmd.site).description(`${cmd.site} commands`); siteGroups.set(cmd.site, siteCmd); }
+    const hasSameName = siteCmd.commands.some(c => c.name() === cmd.name);
+    if (hasSameName) continue;
     const subCmd = siteCmd.command(cmd.name).description(cmd.description);
 
     // Register positional args first, then named options
